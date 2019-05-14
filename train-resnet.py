@@ -1,4 +1,4 @@
-from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, BatchNormalization
+from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, BatchNormalization, Permute, ConvLSTM2D, Reshape, Conv3D
 from keras.models import Sequential
 from keras.callbacks import Callback
 import random
@@ -63,12 +63,20 @@ def my_generator(batch_size, img_dir):
 
 
 model = Sequential()
-model.add(Conv2D(32, (3, 3), activation='relu', padding='same',
-                 input_shape=(config.height, config.width, 5 * 3)))
-model.add(MaxPooling2D(2, 2))
-model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
-model.add(UpSampling2D((2, 2)))
-model.add(Conv2D(3, (3, 3), activation='relu', padding='same'))
+model.add(Reshape((config.height,config.width,5,3), input_shape=(config.height, config.width, 5 * 3)))
+model.add(Permute((3,1,2,4)))
+model.add(Conv3D(3,(3,3,3),padding='same'))
+#model.add(Reshape((24,24,3)))
+#model.add(UpSampling2D((4,4)))
+#model.add(Reshape((96,96,3)))
+
+#model.add(Conv2D(32, (3, 3), activation='relu', padding='same',
+#                 input_shape=(config.height, config.width, 5 * 3)))
+#model.add(BatchNormalization())
+#model.add(MaxPooling2D(2, 2))
+#model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
+#model.add(UpSampling2D((2, 2)))
+#model.add(Conv2D(3, (3, 3), activation='relu', padding='same'))
 
 
 def perceptual_distance(y_true, y_pred):
@@ -81,6 +89,7 @@ def perceptual_distance(y_true, y_pred):
 
 
 model.compile(optimizer='adam', loss=[perceptual_distance], metrics=[perceptual_distance])
+model.summary()
 
 model.fit_generator(my_generator(config.batch_size, train_dir),
                     steps_per_epoch=len(

@@ -1,5 +1,5 @@
-from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, BatchNormalization
-from keras.models import Sequential
+from keras.layers import Dense, Flatten, Dropout, Conv2D, MaxPooling2D, Reshape, BatchNormalization, Input, Concatenate, LeakyReLU, UpSampling2D
+from keras.models import Sequential, Model
 from keras.callbacks import Callback
 import random
 import glob
@@ -61,16 +61,31 @@ def my_generator(batch_size, img_dir):
         yield (input_images, output_images)
         counter += batch_size
 
+def inception_block(ip):
+    conv1x1_out = Conv2D(32, (1,1), padding='same', activation="relu")(ip)
+    conv3x3_out = Conv2D(32, (3,3), padding='same', activation="relu")(ip)
+    conv5x5_out = Conv2D(32, (5,5), padding='same', activation="relu")(ip)
+    maxpool3x3_out = MaxPooling2D(pool_size=(3, 3), strides=(1,1), padding='same')(ip)
+    concat_out = Concatenate()([conv1x1_out, conv3x3_out, conv5x5_out, maxpool3x3_out])
+    return concat_out
+    
+inp = Input(shape=(config.height, config.width, 5 * 3))
+#reshape_out = Reshape((img_width, img_height, 1))(inp)
+incept1_out = inception_block(inp)
+maxpool1_out = MaxPooling2D((4,4))(incept1_out)
+incept2_out = inception_block(maxpool1_out)
+batchnorm1_out = BatchNormalization()(incept2_out)
+conv2d3_out = Conv2D(3,(3,3),padding='same')(batchnorm1_out)
+upsample1_out = UpSampling2D((4,4))(conv2d3_out)
+#flat1_out = Flatten()(batchnorm1_out)
+#dense1_out = Dense(128, activation="relu")(flat1_out)
+#dropout1_out = Dropout(0.25)(dense1_out)
+#dense2_out = Dense(64, activation="relu")(dropout1_out)
+#dropout2_out = Dropout(0.2)(dense2_out)
+#dense3_out = Dense(num_classes, activation="softmax")(dropout2_out)
+model = Model(inp, upsample1_out)
 
-model = Sequential()
-model.add(Conv2D(32, (3, 3), activation='relu', padding='same',
-                 input_shape=(config.height, config.width, 5 * 3)))
-model.add(MaxPooling2D(2, 2))
-model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
-model.add(UpSampling2D((2, 2)))
-model.add(Conv2D(3, (3, 3), activation='relu', padding='same'))
-
-
+    
 def perceptual_distance(y_true, y_pred):
     rmean = (y_true[:, :, :, 0] + y_pred[:, :, :, 0]) / 2
     r = y_true[:, :, :, 0] - y_pred[:, :, :, 0]
@@ -81,6 +96,7 @@ def perceptual_distance(y_true, y_pred):
 
 
 model.compile(optimizer='adam', loss=[perceptual_distance], metrics=[perceptual_distance])
+model.summary()
 
 model.fit_generator(my_generator(config.batch_size, train_dir),
                     steps_per_epoch=len(

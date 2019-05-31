@@ -1,5 +1,5 @@
-from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, BatchNormalization, Permute, ConvLSTM2D, Reshape, Conv3D
-from keras.models import Sequential
+from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, BatchNormalization, Permute, ConvLSTM2D, Reshape, Conv3D, Lambda, Add, Input
+from keras.models import Sequential, Model
 from keras.callbacks import Callback
 import random
 import glob
@@ -10,11 +10,12 @@ import os
 from PIL import Image
 import numpy as np
 from keras import backend as K
+from keras.preprocessing.image import ImageDataGenerator
 
 run = wandb.init(project='catz-may13', entity='qualcomm')
 config = run.config
 
-config.num_epochs = 20
+config.num_epochs = 2
 config.batch_size = 32
 config.img_dir = "images"
 config.height = 96
@@ -22,6 +23,9 @@ config.width = 96
 
 val_dir = 'catz/test'
 train_dir = 'catz/train'
+
+img_gen = ImageDataGenerator()
+transform_parameters = {'theta':10}
 
 # automatically get the data if it doesn't exist
 if not os.path.exists("catz"):
@@ -56,28 +60,42 @@ def my_generator(batch_size, img_dir):
             input_imgs = glob.glob(cat_dirs[counter + i] + "/cat_[0-5]*")
             imgs = [Image.open(img) for img in sorted(input_imgs)]
             input_images[i] = np.concatenate(imgs, axis=2)
-            output_images[i] = np.array(Image.open(
-                cat_dirs[counter + i] + "/cat_result.jpg"))
+            #transformed_imgs = []
+            #transformed_imgs.append ( img_gen.random_transform(np.asarray(imgs[0]),i*100) )
+            #transformed_imgs.append ( img_gen.random_transform(np.asarray(imgs[1]),i*100) )
+            #transformed_imgs.append ( img_gen.random_transform(np.asarray(imgs[2]),i*100) )
+            #transformed_imgs.append ( img_gen.random_transform(np.asarray(imgs[3]),i*100) )
+            #transformed_imgs.append ( img_gen.random_transform(np.asarray(imgs[4]),i*100) )
+            #input_images[i+batch_size] = np.concatenate(transformed_imgs, axis=2)
+            output_images[i] = np.array(Image.open(cat_dirs[counter + i] + "/cat_result.jpg"))
+            #output_images[i+batch_size] = img_gen.random_transform(np.asarray(output_images[i]),i*100)            
         yield (input_images, output_images)
         counter += batch_size
 
+def extract_last(img_seq):
+    return img_seq[:,4,:,:,:] 
+        
+inp = Input(shape=(config.height, config.width, 5 * 3))
+reshape_out = Reshape((config.height,config.width,5,3))(inp)
+perm_out = Permute((3,1,2,4))(reshape_out)
+#convlstm2d_out = ConvLSTM2D(16, (3,3), padding='same', recurrent_dropout=0.2, dropout=0.2, activation='tanh', #recurrent_activation='hard_sigmoid', return_sequences=False)(perm_out)
+#conv2d1_out = Conv2D(32,(3,3),padding='same',activation='relu')(convlstm2d_out)
+#batchnorm_out = BatchNormalization()(conv2d1_out)
+#conv2d2_out = Conv2D(3,(3,3),padding='same',activation='relu')(batchnorm_out)
+layer = Lambda(extract_last, ((96,96,3)))
+last_out = layer(perm_out)
+#add_out = Add()([conv2d2_out, last_out])
+model = Model(inp, last_out)
 
-model = Sequential()
-model.add(Reshape((config.height,config.width,5,3), input_shape=(config.height, config.width, 5 * 3)))
-model.add(Permute((3,1,2,4)))
-model.add(Conv3D(3,(3,3,3),padding='same'))
-#model.add(Reshape((24,24,3)))
-#model.add(UpSampling2D((4,4)))
-#model.add(Reshape((96,96,3)))
 
-#model.add(Conv2D(32, (3, 3), activation='relu', padding='same',
-#                 input_shape=(config.height, config.width, 5 * 3)))
+
+#model = Sequential()
+#model.add(Reshape((config.height,config.width,5,3), input_shape=(config.height, config.width, 5 * 3)))
+#model.add(Permute((3,1,2,4)))
+#model.add(ConvLSTM2D(16, (3,3), padding='same', recurrent_dropout=0.2, dropout=0.2, activation='tanh', #recurrent_activation='hard_sigmoid', return_sequences=False))
+#model.add(Conv2D(32,(3,3),padding='same',activation='relu'))
 #model.add(BatchNormalization())
-#model.add(MaxPooling2D(2, 2))
-#model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
-#model.add(UpSampling2D((2, 2)))
-#model.add(Conv2D(3, (3, 3), activation='relu', padding='same'))
-
+#model.add(Conv2D(3,(3,3),padding='same'))
 
 def perceptual_distance(y_true, y_pred):
     rmean = (y_true[:, :, :, 0] + y_pred[:, :, :, 0]) / 2
@@ -92,8 +110,7 @@ model.compile(optimizer='adam', loss=[perceptual_distance], metrics=[perceptual_
 model.summary()
 
 model.fit_generator(my_generator(config.batch_size, train_dir),
-                    steps_per_epoch=len(
-                        glob.glob(train_dir + "/*")) // config.batch_size,
+                    steps_per_epoch=len(glob.glob(train_dir + "/*")) // config.batch_size,
                     epochs=config.num_epochs, callbacks=[
     ImageCallback(), WandbCallback()],
     validation_steps=len(glob.glob(val_dir + "/*")) // config.batch_size,
